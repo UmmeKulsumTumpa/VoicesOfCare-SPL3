@@ -1,0 +1,54 @@
+# ── Python ────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+
+# ── Virtual environments ──────────────────────────────────────
+.venv/
+venv/
+env/
+.env
+
+# ── Model weights & checkpoints (large binary files) ─────────
+output/
+# Uncommit specific weight files if you want to keep adapter configs
+*.safetensors
+*.pt
+*.bin
+*.ckpt
+*.gguf
+
+# ── Generated / processed data ───────────────────────────────
+processed_data/
+
+# ── Experiment tracking ───────────────────────────────────────
+wandb/
+runs/
+lightning_logs/
+mlruns/
+
+# ── HuggingFace cache ─────────────────────────────────────────
+.cache/
+~/.cache/huggingface/
+
+# ── Jupyter ───────────────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb
+
+# ── OS / editor ───────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ── Secrets ───────────────────────────────────────────────────
+.env
+*.key
+secrets.yaml

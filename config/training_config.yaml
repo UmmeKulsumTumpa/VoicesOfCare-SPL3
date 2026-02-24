@@ -1,0 +1,186 @@
+# =============================================================
+# training_config.yaml
+# Master configuration for QLoRA fine-tuning
+# Alzheimer / Dementia Caregiver Chatbot
+# =============================================================
+
+# -------------------------------------------------------
+# MODEL SELECTION
+# Active: Qwen2.5-3B-Instruct — 3.1B text-only LM.
+# In 4-bit QLoRA it uses ~2.0 GB VRAM → fits easily on RTX 3050 (4 GB)
+# with ~1.5 GB headroom for activations and optimizer states.
+# -------------------------------------------------------
+model:
+  # Recommended — Qwen2.5-3B-Instruct (3.1B, text-only, Apache 2.0)
+  name: "Qwen/Qwen2.5-3B-Instruct"
+
+  # Alternatives (uncomment to switch):
+  # name: "Qwen/Qwen2.5-1.5B-Instruct"              # 1.5B, ~1.1 GB in 4-bit (faster, lower quality)
+  # name: "TinyLlama/TinyLlama-1.1B-Chat-v1.0"      # 1.1B, ~0.9 GB in 4-bit (fastest)
+  # name: "microsoft/Phi-3-mini-4k-instruct"         # 3.8B, text-only, ~3.2 GB in 4-bit (tight fit)
+  # name: "microsoft/phi-2"                           # 2.7B, ~1.9 GB in 4-bit
+  # name: "mistralai/Ministral-3-3B-Instruct-2512-BF16"  # 3.4B multimodal — OOM on 4 GB GPUs
+  # name: "mistralai/Mistral-7B-Instruct-v0.3"       # 7B (needs >6 GB VRAM — don't use on 3050)
+
+  # LoRA target modules depend on model architecture.
+  # Supported auto-detected keys: qwen2 | ministral3 | phi3 | phi2 | tinyllama | llama
+  architecture: "qwen2"    # change to match your chosen model
+
+  # Is this a multimodal (vision+text) model?  When true, the loader
+  # uses AutoModel instead of AutoModelForCausalLM and targets only
+  # the language_model sub-module for LoRA.
+  is_multimodal: false
+
+  # Map architecture → LoRA target modules
+  lora_targets:
+    # Ministral 3 — target ONLY language_model layers (skip vision encoder)
+    ministral3: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+    phi3:      ["qkv_proj", "o_proj", "gate_up_proj", "down_proj"]
+    phi2:      ["Wqkv", "dense", "fc1", "fc2"]
+    tinyllama: ["q_proj", "v_proj", "k_proj", "o_proj"]
+    qwen2:     ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+    llama:     ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+
+# -------------------------------------------------------
+# DATA
+# -------------------------------------------------------
+data:
+  # Raw JSONL files (relative to project root or absolute)
+  files:
+    - "../data/one-bucket-top3-comments/alzheimer_instruction_dataset.jsonl"
+    - "../data/one-bucket-top3-comments/dementia_instruction_dataset.jsonl"
+
+  # Output directory for pre-processed / split datasets
+  processed_dir: "./processed_data"
+
+  # Train / Val / Test proportions (must sum to 1.0)
+  splits:
+    train: 0.90
+    val:   0.05
+    test:  0.05
+
+  # Random seed for reproducible splits
+  seed: 42
+
+  # Maximum number of examples to use (null = all)
+  # Set to a small number (e.g. 500) for a quick smoke-test
+  max_samples: null
+
+# -------------------------------------------------------
+# QUANTIZATION  (QLoRA — 4-bit NF4)
+# -------------------------------------------------------
+quantization:
+  load_in_4bit: true
+  bnb_4bit_compute_dtype: "bfloat16"   # bfloat16 is faster on Ampere (RTX 3050)
+  bnb_4bit_quant_type: "nf4"           # NF4 = best quality for 4-bit
+  bnb_4bit_use_double_quant: true      # nested quantization saves ~0.4 GB extra
+
+# -------------------------------------------------------
+# LoRA  (Low-Rank Adaptation)
+# -------------------------------------------------------
+lora:
+  r: 16                   # must match checkpoint-2500 (trained with r=16)
+  lora_alpha: 32          # scaling factor (2 * r)
+  lora_dropout: 0.05
+  bias: "none"
+  task_type: "CAUSAL_LM"
+
+# -------------------------------------------------------
+# TRAINING HYPERPARAMETERS
+# -------------------------------------------------------
+training:
+  output_dir: "./output/run_02"
+
+  # Sequence length: reduced to 256 for epoch 2 on RTX 3050 (3.68 GB VRAM).
+  # At 384 (without Liger), HF ForCausalLMLoss calls logits.float() which
+  # needs a full fp32 logits copy; at seq=384 that is ~142 MiB but only
+  # ~114 MiB is free.  At seq=256 the logits tensor shrinks by 33%,
+  # and the ForCausalLMLoss monkey-patch (in 02_train_qlora.py) skips
+  # the fp32 cast entirely, so the peak logits cost is ~74 MiB (bf16).
+  # Mean sample = ~330 tokens; 256 covers the first 78% of each sample
+  # which contains the full system prompt + most caregiver responses.
+  max_seq_length: 256
+
+  # Epochs / steps
+  # Set to 2 so that when resuming from checkpoint-2500 (end of epoch 1),
+  # the Trainer knows there is one more epoch remaining.
+  num_train_epochs: 2
+  # max_steps: -1   # set >0 to override epochs (useful for quick tests)
+
+  # Effective batch size = per_device * gradient_accumulation_steps
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  gradient_accumulation_steps: 8    # effective batch = 8
+
+  # Optimizer  — paged_adamw_8bit is memory-efficient on small GPUs
+  optim: "paged_adamw_8bit"
+  learning_rate: 5.0e-5            # reduced from 2e-4 for epoch 2 — avoids overwriting epoch 1 learning
+  weight_decay: 0.001
+  max_grad_norm: 1.0
+
+  # LR schedule
+  lr_scheduler_type: "cosine"
+  warmup_ratio: 0.03
+
+  # Mixed precision  — use bf16 on Ampere, fp16 otherwise
+  bf16: true
+  fp16: false
+
+  # Memory optimizations
+  gradient_checkpointing: true
+
+  # Logging & checkpointing
+  logging_steps: 25         # log every 25 steps (~10 min) so you can see loss early
+  eval_strategy: "steps"
+  eval_steps: 500
+  save_strategy: "steps"
+  save_steps: 500
+  save_total_limit: 2
+  load_best_model_at_end: true
+  metric_for_best_model: "eval_loss"
+  greater_is_better: false
+  # Packing: requires flash_attention_2 (needs nvcc/CUDA toolkit to compile).
+  # nvcc is not available on this machine, so packing stays disabled.
+  # To enable: install cuda-toolkit, then: pip install flash-attn --no-build-isolation
+  packing: false
+  # Liger Kernel re-enabled.
+  # Previously it OOM-ed because lm_head.weight was fp32 (1187 MiB) after
+  # prepare_model_for_kbit_training(), leaving only ~308 MiB free — not
+  # enough for Liger's 594 MiB weight-transpose allocation.
+  # The bf16 recast of lm_head (in 02_train_qlora.py) restores ~765 MiB of
+  # free VRAM, leaving ~1584 MiB free before training: 1584 - 594 = 990 MiB
+  # remaining, which comfortably fits activations + optimizer state.
+  # Liger also natively computes token_accuracy and attaches it to outputs,
+  # which TRL's SFTTrainer reads directly — avoiding the fallback logits path
+  # that requires the full (B, S, V) tensor.
+  use_liger_kernel: true
+
+  # Report to wandb / tensorboard / none
+  report_to: "none"   # change to "wandb" to enable W&B logging
+  run_name: "caregiver-chatbot-qwen25-3b-qlora"
+
+# -------------------------------------------------------
+# INFERENCE  (used by 04_chat_inference.py)
+# -------------------------------------------------------
+inference:
+  adapter_path: "./output/run_01"   # path to saved LoRA adapter
+  merged_path: "./output/merged"    # path to fully merged model (after step 3)
+  use_merged: false                 # if true, load merged model instead of adapter
+
+  # Generation parameters
+  max_new_tokens: 512
+  temperature: 0.7
+  top_p: 0.9
+  top_k: 50
+  repetition_penalty: 1.3            # increased from 1.1 to suppress repetitive outputs
+  do_sample: true
+
+# -------------------------------------------------------
+# EVALUATION  (used by 05_evaluate.py)
+# -------------------------------------------------------
+evaluation:
+  test_file: "./processed_data/test.jsonl"
+  predictions_file: "./output/predictions.jsonl"
+  results_file: "./output/eval_results.json"
+  bertscore_model: "distilbert-base-uncased"   # lighter than bert-base for eval
+  batch_size: 8
