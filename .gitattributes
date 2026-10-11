@@ -1,0 +1,2 @@
+output/run_*/*.safetensors filter=lfs diff=lfs merge=lfs -text
+output/run_*/*.bin filter=lfs diff=lfs merge=lfs -text

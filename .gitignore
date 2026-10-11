@@ -15,11 +15,20 @@ env/
 .env
 
 # ── Model weights & checkpoints (large binary files) ─────────
-output/
-# Uncommit specific weight files if you want to keep adapter configs
+# Keep final LoRA adapters + eval results (weights stored via Git LFS);
+# merged models live on Hugging Face (IAmPilgrim/caregiver-chatbot-qwen25-3b)
+output/*
+!output/run_01/
+!output/run_02/
+!output/eval_results.json
+!output/predictions.jsonl
+!output/training.log
+output/run_*/checkpoint-*/
 *.safetensors
+!output/run_*/adapter_model.safetensors
 *.pt
 *.bin
+!output/run_*/training_args.bin
 *.ckpt
 *.gguf
 
